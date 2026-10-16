@@ -1,0 +1,8 @@
+{
+  "name": "StoryForge Studio",
+  "description": "Production-grade AI Story Summarizer, Video Editor, Khmer TTS, Voice Cloning, and Subtitle Studio workstation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
