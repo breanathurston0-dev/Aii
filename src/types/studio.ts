@@ -331,3 +331,45 @@ export interface ProjectComment {
     resolvedAt: string;
   };
 }
+
+// Automated Incremental Backup & Version History Types
+export type SnapshotTriggerType = 
+  | 'automated' 
+  | 'manual' 
+  | 'milestone' 
+  | 'export' 
+  | 'ai_generation' 
+  | 'restore_point';
+
+export interface ProjectSnapshot {
+  id: string;
+  projectId: string;
+  projectName: string;
+  versionTag: string; // e.g. "v1.4", "v1.5-auto"
+  timestamp: string; // ISO date string
+  trigger: SnapshotTriggerType;
+  label?: string; // Optional user label, e.g. "Before Khmer burn-in"
+  summary: {
+    subtitleCount: number;
+    transcriptCount: number;
+    mediaCount: number;
+    milestoneCount: number;
+    commentCount: number;
+    sizeBytes: number;
+    changesDetected?: string[];
+  };
+  destination: 'local' | 'cloud' | 'both';
+  cloudSynced?: boolean;
+  cloudSyncTimestamp?: string;
+  // Full project state snapshot for safe rollback
+  projectData: Project;
+}
+
+export interface BackupSettings {
+  autoBackupEnabled: boolean;
+  intervalSeconds: number; // e.g. 60, 120, 300
+  maxSnapshotsPerProject: number; // e.g. 20
+  cloudSyncEnabled: boolean;
+  saveOnMajorMilestone: boolean;
+  saveBeforeExport: boolean;
+}

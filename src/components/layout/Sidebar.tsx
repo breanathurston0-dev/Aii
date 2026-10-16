@@ -35,7 +35,7 @@ interface NavSection {
 }
 
 export const Sidebar: React.FC = () => {
-  const { activePage, setActivePage, jobQueue } = useStudio();
+  const { activePage, setActivePage, jobQueue, snapshots } = useStudio();
 
   const runningCount = jobQueue.filter(j => j.status === 'running').length;
 
@@ -78,7 +78,7 @@ export const Sidebar: React.FC = () => {
         { id: 'export-center', label: 'Export Center', icon: DownloadCloud },
         { id: 'processing-queue', label: 'Processing Queue', icon: ListOrdered, badge: runningCount > 0 ? String(runningCount) : undefined },
         { id: 'provider-settings', label: 'AI Provider Settings', icon: Cpu },
-        { id: 'history', label: 'History & Audit', icon: History },
+        { id: 'history', label: 'Version History', icon: History, badge: snapshots.length > 0 ? `${snapshots.length}v` : undefined },
         { id: 'settings', label: 'Settings', icon: Settings },
         { id: 'logs-diagnostics', label: 'Logs & Diagnostics', icon: Terminal },
       ],

@@ -458,6 +458,15 @@ export const ProjectsView: React.FC = () => {
             <span>SQLite Schema</span>
           </button>
 
+          <button
+            onClick={() => setActivePage('history')}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-md transition-colors cursor-pointer"
+            title="View automated incremental snapshots and restore previous states"
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Version History</span>
+          </button>
+
           <label className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-md cursor-pointer transition-colors">
             <Upload className="w-3.5 h-3.5 text-indigo-400" />
             <span>Restore JSON</span>

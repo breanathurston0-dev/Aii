@@ -17,7 +17,10 @@ import {
   CommentAuthor,
   CommentReply,
   CommentStatus,
-  ProjectComment
+  ProjectComment,
+  ProjectSnapshot,
+  BackupSettings,
+  SnapshotTriggerType
 } from '../types/studio';
 import { SAMPLE_PROJECTS, DEFAULT_PROJECT_FOLDERS } from '../services/mockData';
 import { fetchSystemStatus } from '../services/geminiService';
@@ -32,6 +35,14 @@ import {
   generateSampleComments,
   formatTimestampShort 
 } from '../services/commentsService';
+import {
+  DEFAULT_BACKUP_SETTINGS,
+  SNAPSHOT_STORAGE_KEY,
+  BACKUP_SETTINGS_STORAGE_KEY,
+  createProjectSnapshot,
+  generateInitialSampleSnapshots,
+  detectProjectChanges
+} from '../services/backupService';
 
 export const generateDefaultMilestones = (startDateStr?: string, deadlineStr?: string): ProjectMilestone[] => {
   const start = startDateStr ? new Date(startDateStr).getTime() : Date.now();
@@ -178,6 +189,16 @@ interface StudioContextType {
   addCommentReply: (commentId: string, content: string, author?: CommentAuthor) => void;
   deleteCommentReply: (commentId: string, replyId: string) => void;
   toggleCommentReaction: (commentId: string, emoji: string) => void;
+  // Automated Incremental Backup & Version History
+  snapshots: ProjectSnapshot[];
+  backupSettings: BackupSettings;
+  updateBackupSettings: (updates: Partial<BackupSettings>) => void;
+  createSnapshot: (projectId?: string, label?: string, trigger?: SnapshotTriggerType, destination?: 'local' | 'cloud' | 'both') => ProjectSnapshot;
+  restoreSnapshot: (snapshotId: string) => boolean;
+  deleteSnapshot: (snapshotId: string) => void;
+  syncSnapshotToCloud: (snapshotId: string) => void;
+  importSnapshotFromJson: (jsonStr: string) => boolean;
+  lastAutoBackupTime: string | null;
 }
 
 const StudioContext = createContext<StudioContextType | undefined>(undefined);
@@ -1086,6 +1107,196 @@ export const StudioProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }));
   };
 
+  // =========================================================================
+  // AUTOMATED INCREMENTAL BACKUP & VERSION HISTORY SYSTEM
+  // =========================================================================
+  const [backupSettings, setBackupSettings] = useState<BackupSettings>(() => {
+    try {
+      const stored = localStorage.getItem(BACKUP_SETTINGS_STORAGE_KEY);
+      if (stored) return { ...DEFAULT_BACKUP_SETTINGS, ...JSON.parse(stored) };
+    } catch {
+      // fallback
+    }
+    return DEFAULT_BACKUP_SETTINGS;
+  });
+
+  const [snapshots, setSnapshots] = useState<ProjectSnapshot[]>(() => {
+    try {
+      const stored = localStorage.getItem(SNAPSHOT_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {
+      // fallback
+    }
+    return generateInitialSampleSnapshots(projects);
+  });
+
+  const [lastAutoBackupTime, setLastAutoBackupTime] = useState<string | null>(() => {
+    return snapshots.length > 0 ? snapshots[snapshots.length - 1].timestamp : null;
+  });
+
+  // Sync backup settings to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(BACKUP_SETTINGS_STORAGE_KEY, JSON.stringify(backupSettings));
+    } catch {
+      // ignore quota
+    }
+  }, [backupSettings]);
+
+  // Sync snapshots to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(SNAPSHOT_STORAGE_KEY, JSON.stringify(snapshots));
+    } catch {
+      // ignore quota
+    }
+  }, [snapshots]);
+
+  // Update backup settings
+  const updateBackupSettings = (updates: Partial<BackupSettings>) => {
+    setBackupSettings(prev => ({ ...prev, ...updates }));
+    addNotification('Backup configuration saved', 'info');
+  };
+
+  // Create manual or programmatic snapshot
+  const createSnapshot = (
+    projectId?: string,
+    label?: string,
+    trigger: SnapshotTriggerType = 'manual',
+    destination: 'local' | 'cloud' | 'both' = 'both'
+  ): ProjectSnapshot => {
+    const targetProj = projectId ? projects.find(p => p.id === projectId) || activeProject : activeProject;
+    const projectSnapshots = snapshots.filter(s => s.projectId === targetProj.id);
+    const newSnap = createProjectSnapshot(targetProj, trigger, label, projectSnapshots, destination);
+
+    setSnapshots(prev => {
+      const otherProjectSnapshots = prev.filter(s => s.projectId !== targetProj.id);
+      const updatedThisProj = [...projectSnapshots, newSnap];
+      
+      const pruned = updatedThisProj.length > backupSettings.maxSnapshotsPerProject
+        ? updatedThisProj.slice(updatedThisProj.length - backupSettings.maxSnapshotsPerProject)
+        : updatedThisProj;
+
+      return [...otherProjectSnapshots, ...pruned];
+    });
+
+    setLastAutoBackupTime(newSnap.timestamp);
+
+    if (trigger === 'manual') {
+      addNotification(`Snapshot ${newSnap.versionTag} created for "${targetProj.name}"`, 'success');
+      addHistory('Version Snapshot Created', `Created manual checkpoint ${newSnap.versionTag} (${label || 'Saved state'})`, 'project');
+    }
+
+    return newSnap;
+  };
+
+  // Restore snapshot to active state with safety checkpoint
+  const restoreSnapshot = (snapshotId: string): boolean => {
+    const targetSnap = snapshots.find(s => s.id === snapshotId);
+    if (!targetSnap) {
+      addNotification('Snapshot could not be found to restore', 'error');
+      return false;
+    }
+
+    const restoredProject = JSON.parse(JSON.stringify(targetSnap.projectData)) as Project;
+    restoredProject.updatedAt = new Date().toISOString();
+
+    // 1. Create a pre-restore safety checkpoint of current state so user never loses work
+    createSnapshot(restoredProject.id, `Pre-restore safety snapshot before rolling back to ${targetSnap.versionTag}`, 'restore_point');
+
+    // 2. Apply restored project to state
+    setProjects(prev => prev.map(p => p.id === restoredProject.id ? restoredProject : p));
+    if (activeProjectId === restoredProject.id) {
+      setVideoCurrentTime(0);
+    }
+
+    addNotification(`Project successfully restored to ${targetSnap.versionTag} (${targetSnap.label || 'Saved checkpoint'})`, 'success');
+    addHistory('Version Restored', `Restored "${restoredProject.name}" to version ${targetSnap.versionTag} from ${new Date(targetSnap.timestamp).toLocaleString()}`, 'project');
+    return true;
+  };
+
+  // Delete snapshot
+  const deleteSnapshot = (snapshotId: string) => {
+    setSnapshots(prev => prev.filter(s => s.id !== snapshotId));
+    addNotification('Snapshot removed from version history', 'info');
+  };
+
+  // Sync snapshot to cloud
+  const syncSnapshotToCloud = (snapshotId: string) => {
+    setSnapshots(prev => prev.map(s => {
+      if (s.id !== snapshotId) return s;
+      return {
+        ...s,
+        cloudSynced: true,
+        cloudSyncTimestamp: new Date().toISOString(),
+        destination: s.destination === 'local' ? 'both' : s.destination
+      };
+    }));
+    addNotification('Snapshot synced to StoryForge Cloud Storage', 'success');
+  };
+
+  // Import snapshot from JSON string
+  const importSnapshotFromJson = (jsonStr: string): boolean => {
+    try {
+      const parsed = JSON.parse(jsonStr);
+      if (parsed.projectData && parsed.versionTag && parsed.id) {
+        setSnapshots(prev => [parsed, ...prev]);
+        addNotification(`Imported snapshot ${parsed.versionTag} for "${parsed.projectName}"`, 'success');
+        return true;
+      }
+      addNotification('Invalid StoryForge backup file format', 'error');
+      return false;
+    } catch {
+      addNotification('Failed to parse backup JSON file', 'error');
+      return false;
+    }
+  };
+
+  // Periodic Automated Incremental Backup Engine
+  useEffect(() => {
+    if (!backupSettings.autoBackupEnabled || backupSettings.intervalSeconds <= 0) return;
+
+    const intervalMs = backupSettings.intervalSeconds * 1000;
+    const timer = setInterval(() => {
+      if (!activeProject) return;
+
+      const projectSnaps = snapshots.filter(s => s.projectId === activeProject.id);
+      const latestSnap = projectSnaps[projectSnaps.length - 1];
+
+      // Detect if changes actually occurred since latest snapshot
+      const changes = detectProjectChanges(activeProject, latestSnap?.projectData);
+      
+      // If there are specific detected changes, save incremental snapshot
+      const hasMeaningfulChanges = changes.length > 0 && !changes.every(c => c.includes('checkpoint'));
+
+      if (hasMeaningfulChanges) {
+        const autoSnap = createProjectSnapshot(
+          activeProject,
+          'automated',
+          `Auto-save: ${changes[0] || 'Incremental updates'}`,
+          projectSnaps,
+          backupSettings.cloudSyncEnabled ? 'both' : 'local'
+        );
+
+        setSnapshots(prev => {
+          const otherProjectSnapshots = prev.filter(s => s.projectId !== activeProject.id);
+          const updatedThisProj = [...projectSnaps, autoSnap];
+          const pruned = updatedThisProj.length > backupSettings.maxSnapshotsPerProject
+            ? updatedThisProj.slice(updatedThisProj.length - backupSettings.maxSnapshotsPerProject)
+            : updatedThisProj;
+          return [...otherProjectSnapshots, ...pruned];
+        });
+
+        setLastAutoBackupTime(autoSnap.timestamp);
+      }
+    }, intervalMs);
+
+    return () => clearInterval(timer);
+  }, [backupSettings.autoBackupEnabled, backupSettings.intervalSeconds, backupSettings.cloudSyncEnabled, backupSettings.maxSnapshotsPerProject, activeProject, snapshots]);
+
   // Find active subtitle corresponding to videoCurrentTime
   const activeSubtitle = activeProject.subtitles.find(
     s => videoCurrentTime >= s.startSeconds && videoCurrentTime <= s.endSeconds
@@ -1171,6 +1382,16 @@ export const StudioProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         addCommentReply,
         deleteCommentReply,
         toggleCommentReaction,
+        // Automated Incremental Backup & Version History
+        snapshots,
+        backupSettings,
+        updateBackupSettings,
+        createSnapshot,
+        restoreSnapshot,
+        deleteSnapshot,
+        syncSnapshotToCloud,
+        importSnapshotFromJson,
+        lastAutoBackupTime,
       }}
     >
       {children}

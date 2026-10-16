@@ -1,10 +1,10 @@
 import React from 'react';
 import { useStudio } from '../../context/StudioContext';
-import { Activity, Clock, Film, Subtitles, CheckCircle2 } from 'lucide-react';
+import { Activity, Clock, Film, Subtitles, CheckCircle2, ShieldCheck } from 'lucide-react';
 import { secondsToSrtTimestamp } from '../../services/srtService';
 
 export const StatusBar: React.FC = () => {
-  const { activeProject, videoCurrentTime, jobQueue, systemStatus, khmerFont } = useStudio();
+  const { activeProject, videoCurrentTime, jobQueue, systemStatus, khmerFont, backupSettings, setActivePage } = useStudio();
   const runningJobs = jobQueue.filter(j => j.status === 'running').length;
 
   return (
@@ -64,6 +64,19 @@ export const StatusBar: React.FC = () => {
         <span className="text-slate-400">
           Gemini: <span className={systemStatus?.hasGeminiKey ? 'text-emerald-400' : 'text-slate-400'}>{systemStatus?.hasGeminiKey ? 'Active' : 'Offline'}</span>
         </span>
+
+        <span className="text-slate-700">|</span>
+
+        <button
+          onClick={() => setActivePage('history')}
+          className="flex items-center gap-1 hover:text-indigo-300 transition-colors cursor-pointer"
+          title="Open Version History & Backup Center"
+        >
+          <ShieldCheck className={`w-3 h-3 ${backupSettings.autoBackupEnabled ? 'text-emerald-400' : 'text-amber-400'}`} />
+          <span className="text-slate-400">
+            Auto-Backup: <span className={backupSettings.autoBackupEnabled ? 'text-emerald-400' : 'text-amber-400'}>{backupSettings.autoBackupEnabled ? 'On' : 'Off'}</span>
+          </span>
+        </button>
       </div>
     </footer>
   );
