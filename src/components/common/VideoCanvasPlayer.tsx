@@ -1,7 +1,19 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { useStudio } from '../../context/StudioContext';
-import { Play, Pause, Volume2, VolumeX, Maximize2, RotateCcw, FastForward } from 'lucide-react';
+import { 
+  Play, 
+  Pause, 
+  Volume2, 
+  VolumeX, 
+  Maximize2, 
+  RotateCcw, 
+  FastForward, 
+  MessageSquarePlus,
+  MessageSquare
+} from 'lucide-react';
 import { secondsToSrtTimestamp } from '../../services/srtService';
+import { formatTimestampShort } from '../../services/commentsService';
+import { NewCommentModal } from '../comments/NewCommentModal';
 
 export const VideoCanvasPlayer: React.FC = () => {
   const { 
@@ -11,15 +23,19 @@ export const VideoCanvasPlayer: React.FC = () => {
     isVideoPlaying, 
     setIsVideoPlaying,
     activeSubtitle,
-    khmerFont
+    khmerFont,
+    comments,
+    setActiveCommentId
   } = useStudio();
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const [volume, setVolume] = useState<number>(0.8);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [playbackRate, setPlaybackRate] = useState<number>(1.0);
+  const [isCommentModalOpen, setIsCommentModalOpen] = useState<boolean>(false);
 
   const activeMedia = activeProject.mediaFiles[0];
+  const duration = activeProject.durationSeconds || 60;
 
   // Sync video element time
   useEffect(() => {
@@ -120,17 +136,56 @@ export const VideoCanvasPlayer: React.FC = () => {
 
       {/* Media Control Toolbar */}
       <div className="bg-slate-900/90 backdrop-blur-sm border-t border-slate-800 px-3 py-2 flex flex-col gap-1.5 select-none">
-        {/* Scrubbing Bar */}
-        <div className="flex items-center gap-2">
+        {/* Scrubbing Bar with Comment Pins */}
+        <div className="relative flex items-center group/scrubber pt-1 pb-1">
           <input
             type="range"
             min={0}
-            max={activeProject.durationSeconds || 60}
+            max={duration}
             step={0.1}
             value={videoCurrentTime}
             onChange={handleSeek}
-            className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+            className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500 relative z-10"
           />
+
+          {/* Time-stamped Comment Pins on Scrub Bar */}
+          {comments.map(c => {
+            const leftPct = Math.min(Math.max((c.timestamp / duration) * 100, 0), 100);
+            const isResolved = c.status === 'resolved';
+            const dotColor = isResolved 
+              ? 'bg-emerald-400' 
+              : c.category === 'edit_request' 
+                ? 'bg-amber-400' 
+                : c.category === 'translation_fix' 
+                  ? 'bg-emerald-400' 
+                  : c.category === 'audio_note' 
+                    ? 'bg-cyan-400' 
+                    : 'bg-indigo-400';
+
+            return (
+              <div
+                key={c.id}
+                style={{ left: `${leftPct}%` }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setVideoCurrentTime(c.timestamp);
+                  setActiveCommentId(c.id);
+                }}
+                className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 z-20 cursor-pointer group/pin"
+                title={`${formatTimestampShort(c.timestamp)}: ${c.author.name} (${c.content.slice(0, 30)}...)`}
+              >
+                <div className={`w-2.5 h-2.5 rounded-full ${dotColor} ring-2 ring-slate-950 transition-all duration-150 group-hover/pin:scale-175 group-hover/pin:ring-white shadow-xs`} />
+                {/* Popover Preview Tooltip */}
+                <div className="opacity-0 pointer-events-none group-hover/pin:opacity-100 transition-opacity absolute bottom-full mb-2 left-1/2 -translate-x-1/2 z-30 bg-slate-900 border border-slate-700 rounded-lg p-2 shadow-2xl text-[11px] whitespace-nowrap min-w-[150px] max-w-[240px]">
+                  <div className="flex items-center justify-between gap-1 text-slate-400 font-mono text-[10px] mb-0.5">
+                    <span className="text-indigo-400 font-bold">{formatTimestampShort(c.timestamp)}</span>
+                    <span className="text-slate-300 font-medium">{c.author.name}</span>
+                  </div>
+                  <div className="text-slate-200 truncate font-medium">{c.content}</div>
+                </div>
+              </div>
+            );
+          })}
         </div>
 
         {/* Controls Row */}
@@ -163,10 +218,21 @@ export const VideoCanvasPlayer: React.FC = () => {
               {playbackRate}x
             </button>
 
+            {/* Quick Comment Button */}
+            <button
+              onClick={() => setIsCommentModalOpen(true)}
+              className="flex items-center gap-1 px-2 py-1 rounded bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 font-medium text-[11px] transition-colors ml-1 cursor-pointer"
+              title={`Leave time-stamped note at ${formatTimestampShort(videoCurrentTime)}`}
+            >
+              <MessageSquarePlus className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Note</span>
+              <span className="font-mono text-[10px]">({formatTimestampShort(videoCurrentTime)})</span>
+            </button>
+
             <span className="font-mono text-[11px] text-slate-400 ml-2">
               <span className="text-slate-200">{secondsToSrtTimestamp(videoCurrentTime)}</span>
               <span className="text-slate-600"> / </span>
-              <span>{secondsToSrtTimestamp(activeProject.durationSeconds || 60)}</span>
+              <span>{secondsToSrtTimestamp(duration)}</span>
             </span>
           </div>
 
@@ -200,6 +266,14 @@ export const VideoCanvasPlayer: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Direct Add Note Modal */}
+      <NewCommentModal
+        isOpen={isCommentModalOpen}
+        onClose={() => setIsCommentModalOpen(false)}
+        initialTime={videoCurrentTime}
+        initialTargetType="video"
+      />
     </div>
   );
 };

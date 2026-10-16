@@ -1,4 +1,5 @@
 import { Project } from '../types/studio';
+import { generateSampleComments } from './commentsService';
 
 export const SAMPLE_PROJECTS: Project[] = [
   {
@@ -196,7 +197,8 @@ export const SAMPLE_PROJECTS: Project[] = [
         stage: 'export',
         notes: 'Full-resolution H.264 burn-in render with stereo stem mix.'
       }
-    ]
+    ],
+    comments: generateSampleComments('proj_khmer_angkor_01'),
   },
   {
     id: 'proj_ai_tech_showcase',

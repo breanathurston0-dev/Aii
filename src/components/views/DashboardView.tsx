@@ -42,6 +42,7 @@ import { secondsToSrtTimestamp } from '../../services/srtService';
 import { PROJECT_TEMPLATES } from '../../services/templates';
 import { Project, ProjectTemplate, PageId } from '../../types/studio';
 import { ProjectTimeline } from '../dashboard/ProjectTimeline';
+import { ResourceMonitorWidget } from '../dashboard/ResourceMonitorWidget';
 
 export const DashboardView: React.FC = () => {
   const { 
@@ -560,6 +561,14 @@ export const DashboardView: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* =========================================================================
+          RESOURCE MONITOR WIDGET
+          Real-time performance metrics (CPU, GPU, RAM, Disk I/O) & task correlation
+         ========================================================================= */}
+      <section>
+        <ResourceMonitorWidget />
+      </section>
 
       {/* =========================================================================
           REQUIREMENT 1: PROJECT TEMPLATE SYSTEM IN DASHBOARDVIEW

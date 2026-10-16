@@ -75,6 +75,8 @@ export interface Project {
   startDate?: string;
   deadline?: string;
   milestones?: ProjectMilestone[];
+  // Team Comments & Time-stamped Notes
+  comments?: ProjectComment[];
 }
 
 export interface VeoGenerationRequest {
@@ -278,3 +280,54 @@ export interface ExportPreset {
   updatedAt?: string;
 }
 
+// Time-stamped Team Commenting System
+export interface CommentAuthor {
+  id: string;
+  name: string;
+  role: string;
+  avatarColor: string;
+  initials: string;
+}
+
+export type CommentTargetType = 'video' | 'transcript' | 'both';
+
+export type CommentCategory = 
+  | 'feedback' 
+  | 'edit_request' 
+  | 'translation_fix' 
+  | 'audio_note' 
+  | 'pacing' 
+  | 'general';
+
+export type CommentPriority = 'low' | 'medium' | 'high' | 'critical';
+
+export type CommentStatus = 'open' | 'in_progress' | 'resolved';
+
+export interface CommentReply {
+  id: string;
+  author: CommentAuthor;
+  content: string;
+  createdAt: string;
+}
+
+export interface ProjectComment {
+  id: string;
+  projectId: string;
+  targetType: CommentTargetType;
+  timestamp: number; // In seconds
+  endTimestamp?: number; // Optional duration range end
+  transcriptSegmentId?: number; // Linked TranscriptSegment.id
+  author: CommentAuthor;
+  content: string;
+  category: CommentCategory;
+  priority: CommentPriority;
+  status: CommentStatus;
+  createdAt: string;
+  updatedAt?: string;
+  replies: CommentReply[];
+  reactions?: Record<string, number>;
+  resolvedBy?: {
+    authorName: string;
+    resolvedAt: string;
+  };
+}

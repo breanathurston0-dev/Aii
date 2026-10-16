@@ -11,9 +11,16 @@ import {
   SlidersHorizontal,
   Clock,
   Subtitles,
-  Sparkles
+  Sparkles,
+  MessageSquare,
+  Plus,
+  Play,
+  CheckCircle2
 } from 'lucide-react';
 import { secondsToSrtTimestamp } from '../../services/srtService';
+import { formatTimestampShort } from '../../services/commentsService';
+import { TimeCommentsPanel } from '../comments/TimeCommentsPanel';
+import { NewCommentModal } from '../comments/NewCommentModal';
 
 export const VideoEditorView: React.FC = () => {
   const { 
@@ -23,15 +30,20 @@ export const VideoEditorView: React.FC = () => {
     setVideoCurrentTime,
     addJob,
     addNotification,
-    setActivePage
+    setActivePage,
+    comments,
+    setActiveCommentId
   } = useStudio();
 
   const [trimStart, setTrimStart] = useState<number>(0);
   const [trimEnd, setTrimEnd] = useState<number>(activeProject.durationSeconds || 60);
   const [selectedRatio, setSelectedRatio] = useState<'16:9' | '9:16' | '1:1' | '4:3'>('16:9');
   const [volumeLevel, setVolumeLevel] = useState<number>(100);
+  const [rightPanelTab, setRightPanelTab] = useState<'tools' | 'comments'>('tools');
+  const [isAddNoteModalOpen, setIsAddNoteModalOpen] = useState<boolean>(false);
 
   const activeMedia = activeProject.mediaFiles[0];
+  const openComments = comments.filter(c => c.status !== 'resolved');
 
   // Clip Trim action
   const handleTrimClip = () => {
@@ -117,21 +129,30 @@ export const VideoEditorView: React.FC = () => {
             <span>Video Editor &amp; Timeline</span>
           </h1>
           <p className="text-xs text-slate-400 mt-0.5">
-            Nonlinear video timeline, FFmpeg clip trimming, split at playhead, and audio extraction.
+            Nonlinear video timeline, FFmpeg clip trimming, split at playhead, and team review comments.
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => setIsAddNoteModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-md shadow-sm transition-colors cursor-pointer"
+          >
+            <MessageSquare className="w-3.5 h-3.5" />
+            <span>Add Note at {formatTimestampShort(videoCurrentTime)}</span>
+          </button>
+
           <button
             onClick={() => setActivePage('story-summarizer')}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-900 border border-slate-700 rounded-md"
           >
             <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Summarize This Video</span>
+            <span>Summarize Video</span>
           </button>
+
           <button
             onClick={() => setActivePage('subtitle-editor')}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-md"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-900 border border-slate-700 rounded-md"
           >
             <Subtitles className="w-3.5 h-3.5" />
             <span>Sync Subtitles</span>
@@ -139,9 +160,9 @@ export const VideoEditorView: React.FC = () => {
         </div>
       </div>
 
-      {/* Main Grid: Player on Left, Timeline Tools on Right */}
+      {/* Main Grid: Player on Left, Timeline Tools / Comments on Right */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left: Video Player */}
+        {/* Left: Video Player & Metadata */}
         <div className="lg:col-span-7 space-y-4">
           <VideoCanvasPlayer />
 
@@ -166,154 +187,257 @@ export const VideoEditorView: React.FC = () => {
               </div>
             </div>
           )}
-        </div>
 
-        {/* Right: Trimming, Aspect Ratio, & Audio Tools */}
-        <div className="lg:col-span-5 space-y-4">
-          {/* Trimming & Split Box */}
-          <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-4 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
-              <span className="text-xs font-bold text-white uppercase tracking-wider font-mono">
-                Clip Editing Operations
-              </span>
-              <Scissors className="w-4 h-4 text-indigo-400" />
-            </div>
-
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-mono text-slate-400 mb-1">TRIM START (S)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    max={activeProject.durationSeconds}
-                    step={0.5}
-                    value={trimStart}
-                    onChange={e => setTrimStart(parseFloat(e.target.value) || 0)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded px-2.5 py-1 text-xs text-white font-mono"
-                  />
-                  <span className="text-[10px] text-slate-500 font-mono mt-0.5 block">{secondsToSrtTimestamp(trimStart)}</span>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-mono text-slate-400 mb-1">TRIM END (S)</label>
-                  <input
-                    type="number"
-                    min={trimStart}
-                    max={activeProject.durationSeconds}
-                    step={0.5}
-                    value={trimEnd}
-                    onChange={e => setTrimEnd(parseFloat(e.target.value) || activeProject.durationSeconds)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded px-2.5 py-1 text-xs text-white font-mono"
-                  />
-                  <span className="text-[10px] text-slate-500 font-mono mt-0.5 block">{secondsToSrtTimestamp(trimEnd)}</span>
-                </div>
+          {/* Timeline Notes Quick Bar (Always visible below player) */}
+          <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3.5 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <MessageSquare className="w-4 h-4 text-indigo-400" />
+                <span className="text-xs font-bold text-white uppercase tracking-wider font-mono">
+                  Timeline Time Notes ({comments.length})
+                </span>
               </div>
-
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setTrimStart(videoCurrentTime)}
-                  className="flex-1 py-1 text-[11px] font-mono bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-700"
+                  onClick={() => setRightPanelTab('comments')}
+                  className="text-xs text-indigo-400 hover:text-indigo-300 font-medium hover:underline"
                 >
-                  Set Start at Playhead
-                </button>
-                <button
-                  onClick={() => setTrimEnd(videoCurrentTime)}
-                  className="flex-1 py-1 text-[11px] font-mono bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-700"
-                >
-                  Set End at Playhead
-                </button>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 pt-2">
-                <button
-                  onClick={handleTrimClip}
-                  className="flex items-center justify-center gap-1.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xs font-semibold"
-                >
-                  <Scissors className="w-3.5 h-3.5" />
-                  <span>Execute Trim</span>
-                </button>
-
-                <button
-                  onClick={handleSplitAtPlayhead}
-                  className="flex items-center justify-center gap-1.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs font-medium border border-slate-700"
-                >
-                  <span>Split at Playhead</span>
+                  View All ({openComments.length} Open) →
                 </button>
               </div>
             </div>
+
+            {/* Quick Note Pills Row */}
+            {comments.length > 0 ? (
+              <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-0.5 no-scrollbar">
+                {comments.map(c => {
+                  const isResolved = c.status === 'resolved';
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => {
+                        setVideoCurrentTime(c.timestamp);
+                        setActiveCommentId(c.id);
+                        setRightPanelTab('comments');
+                      }}
+                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-mono shrink-0 transition-all ${
+                        isResolved
+                          ? 'bg-slate-950/60 border-slate-800 text-slate-500 hover:text-slate-300'
+                          : 'bg-slate-800/80 hover:bg-slate-700/80 border-slate-700 text-slate-200 hover:border-indigo-500'
+                      }`}
+                      title={`${c.author.name}: ${c.content}`}
+                    >
+                      <Play className="w-2.5 h-2.5 text-indigo-400 fill-indigo-400" />
+                      <span className="font-bold text-indigo-300">{formatTimestampShort(c.timestamp)}</span>
+                      <span className="text-[11px] text-slate-400 font-sans max-w-[130px] truncate">
+                        {c.content}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-500 italic">
+                No time-stamped feedback left yet. Click "Add Note" to annotate cuts for your team.
+              </p>
+            )}
           </div>
+        </div>
 
-          {/* Aspect Ratio & Formats */}
-          <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-4 space-y-3">
-            <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
-              <span className="text-xs font-bold text-white uppercase tracking-wider font-mono">
-                Aspect Ratio Preset
-              </span>
-              <span className="text-xs text-slate-500 font-mono">{selectedRatio}</span>
-            </div>
-
-            <div className="grid grid-cols-4 gap-2">
-              {(['16:9', '9:16', '1:1', '4:3'] as const).map(ratio => (
-                <button
-                  key={ratio}
-                  onClick={() => setSelectedRatio(ratio)}
-                  className={`py-1.5 text-xs font-mono rounded border transition-colors ${
-                    selectedRatio === ratio
-                      ? 'bg-indigo-600 text-white border-indigo-500 font-bold'
-                      : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
-                  }`}
-                >
-                  {ratio}
-                </button>
-              ))}
-            </div>
-
-            <div className="pt-2">
-              <label className="block text-[11px] font-mono text-slate-400 mb-1">
-                AUDIO VOLUME GAIN: {volumeLevel}%
-              </label>
-              <input
-                type="range"
-                min={0}
-                max={200}
-                value={volumeLevel}
-                onChange={e => setVolumeLevel(parseInt(e.target.value))}
-                className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-              />
-            </div>
-
+        {/* Right: Tabbed Panel (Clip Operations OR Team Feedback & Notes) */}
+        <div className="lg:col-span-5 space-y-4">
+          {/* Panel Selector Tabs */}
+          <div className="flex items-center bg-slate-900 border border-slate-800 p-1 rounded-xl">
             <button
-              onClick={handleExtractAudio}
-              className="w-full flex items-center justify-center gap-1.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs font-medium border border-slate-700 mt-2"
+              onClick={() => setRightPanelTab('tools')}
+              className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-all ${
+                rightPanelTab === 'tools'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'text-slate-400 hover:text-white'
+              }`}
             >
-              <Music className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Extract Audio Track (FFmpeg)</span>
+              <Scissors className="w-3.5 h-3.5" />
+              <span>Clip Tools</span>
+            </button>
+            <button
+              onClick={() => setRightPanelTab('comments')}
+              className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-all ${
+                rightPanelTab === 'comments'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+              <span>Team Feedback</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                rightPanelTab === 'comments' ? 'bg-indigo-800 text-white' : 'bg-slate-800 text-slate-300'
+              }`}>
+                {comments.length}
+              </span>
             </button>
           </div>
 
-          {/* Media Clips In Timeline */}
-          <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-4 space-y-2">
-            <span className="text-xs font-bold text-white uppercase tracking-wider font-mono block">
-              Active Media Clips ({activeProject.mediaFiles.length})
-            </span>
-
-            <div className="space-y-1.5 max-h-48 overflow-y-auto">
-              {activeProject.mediaFiles.map((m, idx) => (
-                <div key={m.id} className="p-2 rounded bg-slate-950 border border-slate-800 flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2 truncate">
-                    <span className="font-mono text-slate-500 text-[10px]">#{idx + 1}</span>
-                    <span className="text-slate-200 truncate">{m.name}</span>
-                  </div>
-                  <span className="font-mono text-slate-400 text-[11px] shrink-0 ml-2">
-                    {secondsToSrtTimestamp(m.duration)}
-                  </span>
-                </div>
-              ))}
+          {/* Conditional Content */}
+          {rightPanelTab === 'comments' ? (
+            <div className="h-[580px]">
+              <TimeCommentsPanel />
             </div>
-          </div>
+          ) : (
+            <div className="space-y-4">
+              {/* Trimming & Split Box */}
+              <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-4 space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
+                  <span className="text-xs font-bold text-white uppercase tracking-wider font-mono">
+                    Clip Editing Operations
+                  </span>
+                  <Scissors className="w-4 h-4 text-indigo-400" />
+                </div>
+
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-mono text-slate-400 mb-1">TRIM START (S)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={activeProject.durationSeconds}
+                        step={0.5}
+                        value={trimStart}
+                        onChange={e => setTrimStart(parseFloat(e.target.value) || 0)}
+                        className="w-full bg-slate-950 border border-slate-700 rounded px-2.5 py-1 text-xs text-white font-mono"
+                      />
+                      <span className="text-[10px] text-slate-500 font-mono mt-0.5 block">{secondsToSrtTimestamp(trimStart)}</span>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-mono text-slate-400 mb-1">TRIM END (S)</label>
+                      <input
+                        type="number"
+                        min={trimStart}
+                        max={activeProject.durationSeconds}
+                        step={0.5}
+                        value={trimEnd}
+                        onChange={e => setTrimEnd(parseFloat(e.target.value) || activeProject.durationSeconds)}
+                        className="w-full bg-slate-950 border border-slate-700 rounded px-2.5 py-1 text-xs text-white font-mono"
+                      />
+                      <span className="text-[10px] text-slate-500 font-mono mt-0.5 block">{secondsToSrtTimestamp(trimEnd)}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setTrimStart(videoCurrentTime)}
+                      className="flex-1 py-1 text-[11px] font-mono bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-700 cursor-pointer"
+                    >
+                      Set Start at Playhead
+                    </button>
+                    <button
+                      onClick={() => setTrimEnd(videoCurrentTime)}
+                      className="flex-1 py-1 text-[11px] font-mono bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-700 cursor-pointer"
+                    >
+                      Set End at Playhead
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-2">
+                    <button
+                      onClick={handleTrimClip}
+                      className="flex items-center justify-center gap-1.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xs font-semibold cursor-pointer"
+                    >
+                      <Scissors className="w-3.5 h-3.5" />
+                      <span>Execute Trim</span>
+                    </button>
+
+                    <button
+                      onClick={handleSplitAtPlayhead}
+                      className="flex items-center justify-center gap-1.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs font-medium border border-slate-700 cursor-pointer"
+                    >
+                      <span>Split at Playhead</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Aspect Ratio & Formats */}
+              <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-4 space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
+                  <span className="text-xs font-bold text-white uppercase tracking-wider font-mono">
+                    Aspect Ratio Preset
+                  </span>
+                  <span className="text-xs text-slate-500 font-mono">{selectedRatio}</span>
+                </div>
+
+                <div className="grid grid-cols-4 gap-2">
+                  {(['16:9', '9:16', '1:1', '4:3'] as const).map(ratio => (
+                    <button
+                      key={ratio}
+                      onClick={() => setSelectedRatio(ratio)}
+                      className={`py-1.5 text-xs font-mono rounded border transition-colors ${
+                        selectedRatio === ratio
+                          ? 'bg-indigo-600 text-white border-indigo-500 font-bold'
+                          : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
+                      }`}
+                    >
+                      {ratio}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="pt-2">
+                  <label className="block text-[11px] font-mono text-slate-400 mb-1">
+                    AUDIO VOLUME GAIN: {volumeLevel}%
+                  </label>
+                  <input
+                    type="range"
+                    min={0}
+                    max={200}
+                    value={volumeLevel}
+                    onChange={e => setVolumeLevel(parseInt(e.target.value))}
+                    className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                  />
+                </div>
+
+                <button
+                  onClick={handleExtractAudio}
+                  className="w-full flex items-center justify-center gap-1.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs font-medium border border-slate-700 mt-2 cursor-pointer"
+                >
+                  <Music className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Extract Audio Track (FFmpeg)</span>
+                </button>
+              </div>
+
+              {/* Media Clips In Timeline */}
+              <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-4 space-y-2">
+                <span className="text-xs font-bold text-white uppercase tracking-wider font-mono block">
+                  Active Media Clips ({activeProject.mediaFiles.length})
+                </span>
+
+                <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                  {activeProject.mediaFiles.map((m, idx) => (
+                    <div key={m.id} className="p-2 rounded bg-slate-950 border border-slate-800 flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="font-mono text-slate-500 text-[10px]">#{idx + 1}</span>
+                        <span className="text-slate-200 truncate">{m.name}</span>
+                      </div>
+                      <span className="font-mono text-slate-400 text-[11px] shrink-0 ml-2">
+                        {secondsToSrtTimestamp(m.duration)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Add Note Modal */}
+      <NewCommentModal
+        isOpen={isAddNoteModalOpen}
+        onClose={() => setIsAddNoteModalOpen(false)}
+        initialTime={videoCurrentTime}
+        initialTargetType="video"
+      />
     </div>
   );
 };

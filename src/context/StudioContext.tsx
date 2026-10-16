@@ -13,7 +13,11 @@ import {
   SystemStatus, 
   VeoGenerationRequest,
   VoiceProfile,
-  ExportPreset 
+  ExportPreset,
+  CommentAuthor,
+  CommentReply,
+  CommentStatus,
+  ProjectComment
 } from '../types/studio';
 import { SAMPLE_PROJECTS, DEFAULT_PROJECT_FOLDERS } from '../services/mockData';
 import { fetchSystemStatus } from '../services/geminiService';
@@ -23,6 +27,11 @@ import {
   DEFAULT_EXPORT_PRESETS,
   ACTIVE_PRESET_KEY 
 } from '../services/exportPresets';
+import { 
+  DEFAULT_TEAM_MEMBERS, 
+  generateSampleComments,
+  formatTimestampShort 
+} from '../services/commentsService';
 
 export const generateDefaultMilestones = (startDateStr?: string, deadlineStr?: string): ProjectMilestone[] => {
   const start = startDateStr ? new Date(startDateStr).getTime() : Date.now();
@@ -156,6 +165,19 @@ interface StudioContextType {
   deleteExportPreset: (id: string) => void;
   resetExportPresets: () => void;
   duplicateExportPreset: (id: string) => ExportPreset;
+  // Team Commenting & Time-stamped Notes
+  comments: ProjectComment[];
+  currentTeamUser: CommentAuthor;
+  setCurrentTeamUser: (author: CommentAuthor) => void;
+  activeCommentId: string | null;
+  setActiveCommentId: (id: string | null) => void;
+  addComment: (comment: Omit<ProjectComment, 'id' | 'createdAt' | 'replies' | 'status'> & { status?: CommentStatus }) => ProjectComment;
+  updateComment: (commentId: string, updates: Partial<ProjectComment>) => void;
+  deleteComment: (commentId: string) => void;
+  resolveComment: (commentId: string, resolved: boolean) => void;
+  addCommentReply: (commentId: string, content: string, author?: CommentAuthor) => void;
+  deleteCommentReply: (commentId: string, replyId: string) => void;
+  toggleCommentReaction: (commentId: string, emoji: string) => void;
 }
 
 const StudioContext = createContext<StudioContextType | undefined>(undefined);
@@ -197,6 +219,9 @@ export const StudioProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               startDate,
               deadline,
               milestones,
+              comments: (p.comments && Array.isArray(p.comments) && p.comments.length > 0)
+                ? p.comments
+                : (sampleMatch?.comments || (idx === 0 ? generateSampleComments(p.id) : [])),
             };
           });
         }
@@ -325,6 +350,7 @@ export const StudioProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       startDate,
       deadline,
       milestones: generateDefaultMilestones(startDate, deadline),
+      comments: [],
     };
 
     setProjects(prev => [newProj, ...prev]);
@@ -399,6 +425,7 @@ export const StudioProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       startDate,
       deadline,
       milestones: generateDefaultMilestones(startDate, deadline),
+      comments: [],
     };
 
     setProjects(prev => [newProj, ...prev]);
@@ -952,6 +979,113 @@ export const StudioProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return clone;
   };
 
+  // Team Commenting & Time-stamped Notes System
+  const [currentTeamUser, setCurrentTeamUser] = useState<CommentAuthor>(DEFAULT_TEAM_MEMBERS[0]);
+  const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
+
+  const comments = activeProject.comments || [];
+
+  const addComment = (commentData: Omit<ProjectComment, 'id' | 'createdAt' | 'replies' | 'status'> & { status?: CommentStatus }): ProjectComment => {
+    const newComment: ProjectComment = {
+      ...commentData,
+      id: `comm_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      projectId: activeProjectId,
+      status: commentData.status || 'open',
+      createdAt: new Date().toISOString(),
+      replies: [],
+      reactions: {},
+    };
+
+    updateActiveProject(prev => ({
+      ...prev,
+      comments: [...(prev.comments || []), newComment],
+    }));
+
+    addNotification(`Note added at ${formatTimestampShort(newComment.timestamp)}`, 'success');
+    addHistory('Comment Added', `Added note at ${formatTimestampShort(newComment.timestamp)}: "${newComment.content.slice(0, 35)}..."`, 'project');
+    return newComment;
+  };
+
+  const updateComment = (commentId: string, updates: Partial<ProjectComment>) => {
+    updateActiveProject(prev => ({
+      ...prev,
+      comments: (prev.comments || []).map(c => 
+        c.id === commentId ? { ...c, ...updates, updatedAt: new Date().toISOString() } : c
+      ),
+    }));
+    addNotification('Comment updated', 'info');
+  };
+
+  const deleteComment = (commentId: string) => {
+    updateActiveProject(prev => ({
+      ...prev,
+      comments: (prev.comments || []).filter(c => c.id !== commentId),
+    }));
+    if (activeCommentId === commentId) {
+      setActiveCommentId(null);
+    }
+    addNotification('Comment removed', 'info');
+  };
+
+  const resolveComment = (commentId: string, resolved: boolean) => {
+    updateActiveProject(prev => ({
+      ...prev,
+      comments: (prev.comments || []).map(c => {
+        if (c.id !== commentId) return c;
+        return {
+          ...c,
+          status: resolved ? 'resolved' : 'open',
+          resolvedBy: resolved ? {
+            authorName: currentTeamUser.name,
+            resolvedAt: new Date().toISOString(),
+          } : undefined,
+          updatedAt: new Date().toISOString(),
+        };
+      }),
+    }));
+    addNotification(resolved ? 'Comment marked as resolved' : 'Comment reopened', 'info');
+  };
+
+  const addCommentReply = (commentId: string, content: string, author?: CommentAuthor) => {
+    if (!content.trim()) return;
+    const reply: CommentReply = {
+      id: `rep_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      author: author || currentTeamUser,
+      content: content.trim(),
+      createdAt: new Date().toISOString(),
+    };
+
+    updateActiveProject(prev => ({
+      ...prev,
+      comments: (prev.comments || []).map(c => 
+        c.id === commentId ? { ...c, replies: [...c.replies, reply], updatedAt: new Date().toISOString() } : c
+      ),
+    }));
+    addNotification('Reply posted to feedback thread', 'success');
+  };
+
+  const deleteCommentReply = (commentId: string, replyId: string) => {
+    updateActiveProject(prev => ({
+      ...prev,
+      comments: (prev.comments || []).map(c => 
+        c.id === commentId ? { ...c, replies: c.replies.filter(r => r.id !== replyId), updatedAt: new Date().toISOString() } : c
+      ),
+    }));
+    addNotification('Reply deleted', 'info');
+  };
+
+  const toggleCommentReaction = (commentId: string, emoji: string) => {
+    updateActiveProject(prev => ({
+      ...prev,
+      comments: (prev.comments || []).map(c => {
+        if (c.id !== commentId) return c;
+        const currentCount = c.reactions?.[emoji] || 0;
+        const nextReactions = { ...c.reactions, [emoji]: currentCount + 1 };
+        return { ...c, reactions: nextReactions };
+      }),
+    }));
+  };
+
   // Find active subtitle corresponding to videoCurrentTime
   const activeSubtitle = activeProject.subtitles.find(
     s => videoCurrentTime >= s.startSeconds && videoCurrentTime <= s.endSeconds
@@ -1024,6 +1158,19 @@ export const StudioProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         deleteExportPreset,
         resetExportPresets,
         duplicateExportPreset,
+        // Team Commenting & Time-stamped Notes
+        comments,
+        currentTeamUser,
+        setCurrentTeamUser,
+        activeCommentId,
+        setActiveCommentId,
+        addComment,
+        updateComment,
+        deleteComment,
+        resolveComment,
+        addCommentReply,
+        deleteCommentReply,
+        toggleCommentReaction,
       }}
     >
       {children}
