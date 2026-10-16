@@ -27,6 +27,7 @@ import {
 import { downloadBlob } from '../../services/exportZipService';
 import { SubtitleSegment } from '../../types/studio';
 import { VideoCanvasPlayer } from '../common/VideoCanvasPlayer';
+import { UndoRedoControls } from '../common/UndoRedoControls';
 
 export const SubtitleEditorView: React.FC = () => {
   const { 
@@ -95,7 +96,7 @@ export const SubtitleEditorView: React.FC = () => {
     updateActiveProject(prev => ({
       ...prev,
       subtitles: [...prev.subtitles, newSub],
-    }));
+    }), 'Add Subtitle Segment');
     addNotification('Subtitle added', 'success');
   };
 
@@ -121,27 +122,27 @@ export const SubtitleEditorView: React.FC = () => {
             }
           : s
       ),
-    }));
+    }), 'Edit Subtitle Text/Timing');
   };
 
   const handleDeleteSub = (id: number) => {
     updateActiveProject(prev => ({
       ...prev,
       subtitles: prev.subtitles.filter(s => s.id !== id),
-    }));
+    }), 'Delete Subtitle Segment');
     addNotification('Subtitle deleted', 'info');
   };
 
   const handleShiftTimestamps = (direction: 1 | -1) => {
     const delta = shiftOffsetMs * direction;
     const shifted = shiftTimestamps(subtitles, delta);
-    updateActiveProject(prev => ({ ...prev, subtitles: shifted }));
+    updateActiveProject(prev => ({ ...prev, subtitles: shifted }), `Shift Subtitles by ${delta > 0 ? '+' : ''}${delta}ms`);
     addNotification(`Shifted all subtitles by ${delta > 0 ? '+' : ''}${delta}ms`, 'success');
   };
 
   const handleFixOverlaps = () => {
     const fixed = fixOverlaps(subtitles);
-    updateActiveProject(prev => ({ ...prev, subtitles: fixed }));
+    updateActiveProject(prev => ({ ...prev, subtitles: fixed }), 'Auto-Fix Overlapping Subtitles');
     addNotification('Resolved all overlapping timestamps', 'success');
   };
 
@@ -160,6 +161,9 @@ export const SubtitleEditorView: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Central Undo/Redo Engine inline toolbar */}
+          <UndoRedoControls variant="compact" showDropdown={true} />
+
           <label className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-900 border border-slate-700 rounded-md cursor-pointer">
             <Upload className="w-3.5 h-3.5 text-indigo-400" />
             <span>Import SRT</span>

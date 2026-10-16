@@ -24,6 +24,7 @@ import { TranscriptSegment } from '../../types/studio';
 import { downloadBlob } from '../../services/exportZipService';
 import { TimeCommentsPanel } from '../comments/TimeCommentsPanel';
 import { NewCommentModal } from '../comments/NewCommentModal';
+import { UndoRedoControls } from '../common/UndoRedoControls';
 
 export const TranscriptEditorView: React.FC = () => {
   const { 
@@ -118,14 +119,14 @@ export const TranscriptEditorView: React.FC = () => {
     updateActiveProject(prev => ({
       ...prev,
       transcript: prev.transcript.map(t => (t.id === id ? { ...t, text, speaker } : t)),
-    }));
+    }), 'Edit Transcript Segment');
   };
 
   const handleDeleteSegment = (id: number) => {
     updateActiveProject(prev => ({
       ...prev,
       transcript: prev.transcript.filter(t => t.id !== id),
-    }));
+    }), 'Delete Transcript Segment');
     addNotification('Transcript segment deleted', 'info');
   };
 
@@ -144,7 +145,7 @@ export const TranscriptEditorView: React.FC = () => {
     updateActiveProject(prev => ({
       ...prev,
       transcript: [...prev.transcript, newSeg],
-    }));
+    }), 'Add Transcript Segment');
     addNotification('Segment added', 'success');
   };
 
@@ -172,7 +173,7 @@ export const TranscriptEditorView: React.FC = () => {
       cpsAlert: false,
     }));
 
-    updateActiveProject(prev => ({ ...prev, subtitles: subs }));
+    updateActiveProject(prev => ({ ...prev, subtitles: subs }), 'Sync Transcript to Subtitles');
     setActivePage('subtitle-editor');
     addNotification('Transcript synchronized to Subtitle Editor', 'success');
   };
@@ -205,6 +206,9 @@ export const TranscriptEditorView: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Central Undo/Redo Engine inline toolbar */}
+          <UndoRedoControls variant="compact" showDropdown={true} />
+
           <button
             onClick={() => setShowCommentsSidebar(!showCommentsSidebar)}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md border transition-colors ${

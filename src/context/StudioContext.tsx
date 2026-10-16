@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { 
   HistoryItem, 
   JobItem, 
@@ -20,7 +20,9 @@ import {
   ProjectComment,
   ProjectSnapshot,
   BackupSettings,
-  SnapshotTriggerType
+  SnapshotTriggerType,
+  UndoHistoryEntry,
+  UndoActionCategory
 } from '../types/studio';
 import { SAMPLE_PROJECTS, DEFAULT_PROJECT_FOLDERS } from '../services/mockData';
 import { fetchSystemStatus } from '../services/geminiService';
@@ -43,6 +45,13 @@ import {
   generateInitialSampleSnapshots,
   detectProjectChanges
 } from '../services/backupService';
+import {
+  MAX_UNDO_STACK_SIZE,
+  DEBOUNCE_COALESCE_MS,
+  hasMeaningfulProjectChange,
+  inferActionDescriptionAndCategory,
+  cloneProjectForUndo
+} from '../services/undoService';
 
 export const generateDefaultMilestones = (startDateStr?: string, deadlineStr?: string): ProjectMilestone[] => {
   const start = startDateStr ? new Date(startDateStr).getTime() : Date.now();
@@ -115,7 +124,7 @@ interface StudioContextType {
       burnInConfig?: Partial<SubtitleBurnInConfig>;
     }
   ) => Project;
-  updateActiveProject: (updater: (prev: Project) => Project) => void;
+  updateActiveProject: (updater: (prev: Project) => Project, actionDescription?: string) => void;
   deleteProject: (id: string) => void;
   duplicateProject: (id: string) => void;
   // Folders & categorization system
@@ -199,6 +208,17 @@ interface StudioContextType {
   syncSnapshotToCloud: (snapshotId: string) => void;
   importSnapshotFromJson: (jsonStr: string) => boolean;
   lastAutoBackupTime: string | null;
+  // Central Undo/Redo State Management System
+  canUndo: boolean;
+  canRedo: boolean;
+  undo: () => void;
+  redo: () => void;
+  undoStack: UndoHistoryEntry[];
+  redoStack: UndoHistoryEntry[];
+  lastUndoAction: string | null;
+  lastRedoAction: string | null;
+  jumpToHistoryState: (index: number, type: 'undo' | 'redo') => void;
+  clearUndoHistory: () => void;
 }
 
 const StudioContext = createContext<StudioContextType | undefined>(undefined);
@@ -327,17 +347,248 @@ export const StudioProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setActiveProjectId(p.id);
   };
 
-  const updateActiveProject = (updater: (prev: Project) => Project) => {
-    setProjects(prev =>
-      prev.map(p => {
-        if (p.id === activeProject.id) {
-          const updated = updater(p);
+  // =========================================================================
+  // CENTRAL UNDO/REDO STATE MANAGEMENT SYSTEM
+  // =========================================================================
+  const [undoStacks, setUndoStacks] = useState<Record<string, UndoHistoryEntry[]>>({});
+  const [redoStacks, setRedoStacks] = useState<Record<string, UndoHistoryEntry[]>>({});
+  const lastEditRecordRef = useRef<{ timestamp: number; action: string; projectId: string } | null>(null);
+
+  const currentUndoStack = useMemo(() => undoStacks[activeProject.id] || [], [undoStacks, activeProject.id]);
+  const currentRedoStack = useMemo(() => redoStacks[activeProject.id] || [], [redoStacks, activeProject.id]);
+  const canUndo = currentUndoStack.length > 0;
+  const canRedo = currentRedoStack.length > 0;
+  const lastUndoAction = currentUndoStack.length > 0 ? currentUndoStack[currentUndoStack.length - 1].actionDescription : null;
+  const lastRedoAction = currentRedoStack.length > 0 ? currentRedoStack[currentRedoStack.length - 1].actionDescription : null;
+
+  const updateActiveProject = useCallback((updater: (prev: Project) => Project, actionDescription?: string) => {
+    setProjects(prevProjects => {
+      const current = prevProjects.find(p => p.id === activeProjectId) || prevProjects[0];
+      if (!current) return prevProjects;
+      const updated = updater(current);
+
+      if (!hasMeaningfulProjectChange(current, updated)) {
+        return prevProjects;
+      }
+
+      const { description, category } = inferActionDescriptionAndCategory(current, updated, actionDescription);
+      const now = Date.now();
+
+      // Check if this action can be coalesced with the immediate prior rapid edit (e.g. continuous typing)
+      const lastRecord = lastEditRecordRef.current;
+      const shouldCoalesce =
+        lastRecord &&
+        lastRecord.projectId === current.id &&
+        lastRecord.action === description &&
+        now - lastRecord.timestamp < DEBOUNCE_COALESCE_MS;
+
+      if (!shouldCoalesce) {
+        const undoEntry: UndoHistoryEntry = {
+          id: `undo_${now}_${Math.random().toString(36).substring(2, 6)}`,
+          timestamp: new Date().toISOString(),
+          actionDescription: description,
+          category,
+          projectId: current.id,
+          snapshot: cloneProjectForUndo(current),
+        };
+
+        setUndoStacks(prev => {
+          const existing = prev[current.id] || [];
+          const nextStack = [...existing, undoEntry].slice(-MAX_UNDO_STACK_SIZE);
+          return { ...prev, [current.id]: nextStack };
+        });
+
+        // Any new manual mutation clears the redo stack for this project
+        setRedoStacks(prev => {
+          if (!prev[current.id] || prev[current.id].length === 0) return prev;
+          return { ...prev, [current.id]: [] };
+        });
+      }
+
+      lastEditRecordRef.current = { timestamp: now, action: description, projectId: current.id };
+
+      return prevProjects.map(p => {
+        if (p.id === current.id) {
           return { ...updated, updatedAt: new Date().toISOString() };
         }
         return p;
-      })
+      });
+    });
+  }, [activeProjectId]);
+
+  const undo = useCallback(() => {
+    const stack = undoStacks[activeProject.id] || [];
+    if (stack.length === 0) {
+      addNotification('Nothing to undo in this project', 'info');
+      return;
+    }
+
+    const entryToRestore = stack[stack.length - 1];
+    const remainingUndo = stack.slice(0, stack.length - 1);
+
+    // Save current active state onto redo stack
+    const redoEntry: UndoHistoryEntry = {
+      id: `redo_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      timestamp: new Date().toISOString(),
+      actionDescription: entryToRestore.actionDescription,
+      category: entryToRestore.category,
+      projectId: activeProject.id,
+      snapshot: cloneProjectForUndo(activeProject),
+    };
+
+    setUndoStacks(prev => ({ ...prev, [activeProject.id]: remainingUndo }));
+    setRedoStacks(prev => {
+      const existing = prev[activeProject.id] || [];
+      return { ...prev, [activeProject.id]: [...existing, redoEntry].slice(-MAX_UNDO_STACK_SIZE) };
+    });
+
+    setProjects(prev =>
+      prev.map(p => (p.id === activeProject.id ? { ...entryToRestore.snapshot, updatedAt: new Date().toISOString() } : p))
     );
-  };
+
+    addNotification(`Undid: ${entryToRestore.actionDescription}`, 'info');
+    addHistory('Undo', `Reverted: ${entryToRestore.actionDescription}`, 'project');
+  }, [activeProject, undoStacks]);
+
+  const redo = useCallback(() => {
+    const stack = redoStacks[activeProject.id] || [];
+    if (stack.length === 0) {
+      addNotification('Nothing to redo in this project', 'info');
+      return;
+    }
+
+    const entryToRedo = stack[stack.length - 1];
+    const remainingRedo = stack.slice(0, stack.length - 1);
+
+    // Save current active state onto undo stack
+    const undoEntry: UndoHistoryEntry = {
+      id: `undo_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      timestamp: new Date().toISOString(),
+      actionDescription: entryToRedo.actionDescription,
+      category: entryToRedo.category,
+      projectId: activeProject.id,
+      snapshot: cloneProjectForUndo(activeProject),
+    };
+
+    setRedoStacks(prev => ({ ...prev, [activeProject.id]: remainingRedo }));
+    setUndoStacks(prev => {
+      const existing = prev[activeProject.id] || [];
+      return { ...prev, [activeProject.id]: [...existing, undoEntry].slice(-MAX_UNDO_STACK_SIZE) };
+    });
+
+    setProjects(prev =>
+      prev.map(p => (p.id === activeProject.id ? { ...entryToRedo.snapshot, updatedAt: new Date().toISOString() } : p))
+    );
+
+    addNotification(`Redid: ${entryToRedo.actionDescription}`, 'success');
+    addHistory('Redo', `Reapplied: ${entryToRedo.actionDescription}`, 'project');
+  }, [activeProject, redoStacks]);
+
+  const jumpToHistoryState = useCallback((targetIndex: number, type: 'undo' | 'redo') => {
+    if (type === 'undo') {
+      const stack = undoStacks[activeProject.id] || [];
+      if (targetIndex < 0 || targetIndex >= stack.length) return;
+
+      const targetEntry = stack[targetIndex];
+      const entriesToMoveToRedo = stack.slice(targetIndex + 1);
+      const remainingUndo = stack.slice(0, targetIndex);
+
+      const currentAsRedo: UndoHistoryEntry = {
+        id: `redo_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        timestamp: new Date().toISOString(),
+        actionDescription: targetEntry.actionDescription,
+        category: targetEntry.category,
+        projectId: activeProject.id,
+        snapshot: cloneProjectForUndo(activeProject),
+      };
+
+      const newRedoEntries = [
+        ...entriesToMoveToRedo.map(e => ({
+          ...e,
+          id: `redo_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        })),
+        currentAsRedo,
+      ];
+
+      setUndoStacks(prev => ({ ...prev, [activeProject.id]: remainingUndo }));
+      setRedoStacks(prev => {
+        const existing = prev[activeProject.id] || [];
+        return { ...prev, [activeProject.id]: [...existing, ...newRedoEntries].slice(-MAX_UNDO_STACK_SIZE) };
+      });
+
+      setProjects(prev =>
+        prev.map(p => (p.id === activeProject.id ? { ...targetEntry.snapshot, updatedAt: new Date().toISOString() } : p))
+      );
+
+      addNotification(`Jumped back to: ${targetEntry.actionDescription}`, 'info');
+    } else {
+      const stack = redoStacks[activeProject.id] || [];
+      if (targetIndex < 0 || targetIndex >= stack.length) return;
+
+      const targetEntry = stack[targetIndex];
+      const remainingRedo = stack.slice(0, targetIndex);
+
+      const undoEntry: UndoHistoryEntry = {
+        id: `undo_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        timestamp: new Date().toISOString(),
+        actionDescription: targetEntry.actionDescription,
+        category: targetEntry.category,
+        projectId: activeProject.id,
+        snapshot: cloneProjectForUndo(activeProject),
+      };
+
+      setRedoStacks(prev => ({ ...prev, [activeProject.id]: remainingRedo }));
+      setUndoStacks(prev => {
+        const existing = prev[activeProject.id] || [];
+        return { ...prev, [activeProject.id]: [...existing, undoEntry].slice(-MAX_UNDO_STACK_SIZE) };
+      });
+
+      setProjects(prev =>
+        prev.map(p => (p.id === activeProject.id ? { ...targetEntry.snapshot, updatedAt: new Date().toISOString() } : p))
+      );
+
+      addNotification(`Redid forward to: ${targetEntry.actionDescription}`, 'success');
+    }
+  }, [activeProject, undoStacks, redoStacks]);
+
+  const clearUndoHistory = useCallback(() => {
+    setUndoStacks(prev => ({ ...prev, [activeProject.id]: [] }));
+    setRedoStacks(prev => ({ ...prev, [activeProject.id]: [] }));
+    addNotification('Undo & Redo history cleared', 'info');
+  }, [activeProject.id]);
+
+  // Global Keyboard Shortcuts (Ctrl/Cmd+Z, Ctrl/Cmd+Y, Ctrl/Cmd+Shift+Z)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isModifier = e.ctrlKey || e.metaKey;
+      if (!isModifier) return;
+
+      const activeEl = document.activeElement;
+      const isTextInput = activeEl && (
+        (activeEl.tagName === 'INPUT' && !['checkbox', 'radio', 'range', 'button', 'submit'].includes((activeEl as HTMLInputElement).type)) ||
+        activeEl.tagName === 'TEXTAREA' ||
+        activeEl.getAttribute('contenteditable') === 'true'
+      );
+
+      const key = e.key.toLowerCase();
+      if (key === 'z') {
+        if (isTextInput) return;
+        e.preventDefault();
+        if (e.shiftKey) {
+          redo();
+        } else {
+          undo();
+        }
+      } else if (key === 'y') {
+        if (isTextInput) return;
+        e.preventDefault();
+        redo();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [undo, redo]);
 
   const createProject = (name: string, desc = '', srcLang = 'km', tgtLang = 'en'): Project => {
     const startDate = new Date().toISOString();
@@ -1392,6 +1643,17 @@ export const StudioProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         syncSnapshotToCloud,
         importSnapshotFromJson,
         lastAutoBackupTime,
+        // Central Undo/Redo State Management System
+        canUndo,
+        canRedo,
+        undo,
+        redo,
+        undoStack: currentUndoStack,
+        redoStack: currentRedoStack,
+        lastUndoAction,
+        lastRedoAction,
+        jumpToHistoryState,
+        clearUndoHistory,
       }}
     >
       {children}

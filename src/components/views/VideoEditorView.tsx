@@ -21,6 +21,7 @@ import { secondsToSrtTimestamp } from '../../services/srtService';
 import { formatTimestampShort } from '../../services/commentsService';
 import { TimeCommentsPanel } from '../comments/TimeCommentsPanel';
 import { NewCommentModal } from '../comments/NewCommentModal';
+import { UndoRedoControls } from '../common/UndoRedoControls';
 
 export const VideoEditorView: React.FC = () => {
   const { 
@@ -63,7 +64,7 @@ export const VideoEditorView: React.FC = () => {
         ...prev,
         durationSeconds: newDur,
         mediaFiles: prev.mediaFiles.map(m => ({ ...m, duration: newDur })),
-      }));
+      }), `Trim Video Clip to ${newDur.toFixed(1)}s`);
       setVideoCurrentTime(0);
 
       return `Trimmed video to ${newDur.toFixed(1)}s`;
@@ -102,7 +103,7 @@ export const VideoEditorView: React.FC = () => {
       updateActiveProject(prev => ({
         ...prev,
         mediaFiles: [clip1, clip2],
-      }));
+      }), `Split Clip at ${secondsToSrtTimestamp(videoCurrentTime)}`);
 
       return 'Clip split into two parts successfully';
     });
@@ -134,6 +135,9 @@ export const VideoEditorView: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Central Undo/Redo Engine inline toolbar */}
+          <UndoRedoControls variant="compact" showDropdown={true} />
+
           <button
             onClick={() => setIsAddNoteModalOpen(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-md shadow-sm transition-colors cursor-pointer"

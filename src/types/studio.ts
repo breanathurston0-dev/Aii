@@ -373,3 +373,24 @@ export interface BackupSettings {
   saveOnMajorMilestone: boolean;
   saveBeforeExport: boolean;
 }
+
+// Central Undo/Redo State Management Types
+export type UndoActionCategory = 
+  | 'subtitles' 
+  | 'transcript' 
+  | 'media' 
+  | 'burnin' 
+  | 'audio' 
+  | 'milestones' 
+  | 'comments' 
+  | 'metadata' 
+  | 'general';
+
+export interface UndoHistoryEntry {
+  id: string;
+  timestamp: string;
+  actionDescription: string;
+  category: UndoActionCategory;
+  projectId: string;
+  snapshot: Project;
+}

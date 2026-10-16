@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { useStudio } from '../../context/StudioContext';
-import { History, Search, Download, Trash2, Filter, ShieldCheck, Activity } from 'lucide-react';
+import { History, Search, Download, Trash2, Filter, ShieldCheck, Activity, Undo2 } from 'lucide-react';
 import { VersionHistoryTab } from '../history/VersionHistoryTab';
+import { ActiveUndoHistoryTab } from '../history/ActiveUndoHistoryTab';
 
 export const HistoryView: React.FC = () => {
-  const { history, snapshots } = useStudio();
-  const [activeTab, setActiveTab] = useState<'versions' | 'audit'>('versions');
+  const { history, snapshots, undoStack, redoStack } = useStudio();
+  const [activeTab, setActiveTab] = useState<'versions' | 'undo-stack' | 'audit'>('versions');
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
 
@@ -51,6 +52,23 @@ export const HistoryView: React.FC = () => {
           </button>
 
           <button
+            onClick={() => setActiveTab('undo-stack')}
+            className={`px-3 py-1.5 rounded-md flex items-center gap-2 font-medium transition-colors cursor-pointer ${
+              activeTab === 'undo-stack'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Undo2 className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Live Undo/Redo Stack</span>
+            <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+              activeTab === 'undo-stack' ? 'bg-indigo-700 text-white' : 'bg-slate-800 text-slate-400'
+            }`}>
+              {undoStack.length + redoStack.length}
+            </span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('audit')}
             className={`px-3 py-1.5 rounded-md flex items-center gap-2 font-medium transition-colors cursor-pointer ${
               activeTab === 'audit'
@@ -72,6 +90,11 @@ export const HistoryView: React.FC = () => {
       {/* Tab 1: Version History & Incremental Snapshots */}
       {activeTab === 'versions' && (
         <VersionHistoryTab />
+      )}
+
+      {/* Tab 2: Live Undo/Redo Edit Stack & Time Travel */}
+      {activeTab === 'undo-stack' && (
+        <ActiveUndoHistoryTab />
       )}
 
       {/* Tab 2: Activity Audit Log */}

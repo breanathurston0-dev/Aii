@@ -10,6 +10,7 @@ import {
   Sparkles,
   Layers
 } from 'lucide-react';
+import { UndoRedoControls } from '../common/UndoRedoControls';
 
 export const TopBar: React.FC = () => {
   const { 
@@ -70,6 +71,11 @@ export const TopBar: React.FC = () => {
               {runningJobsCount} Active Job{runningJobsCount > 1 ? 's' : ''}
             </span>
           )}
+        </div>
+
+        {/* Zone 2.5: Central Undo/Redo Engine */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          <UndoRedoControls variant="compact" showDropdown={true} />
         </div>
 
         {/* Zone 3: Primary Actions */}
